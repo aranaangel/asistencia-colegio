@@ -33,7 +33,7 @@ yarn-error.*
 # local env files
 /.env
 .env*.local
-
+servidor-api/.env
 # typescript
 *.tsbuildinfo
 
@@ -43,4 +43,3 @@ app-example
 /ios
 /android
 
-servidor-api/.env

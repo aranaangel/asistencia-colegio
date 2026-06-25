@@ -1,24 +1,22 @@
 // ============ IMPORTACIONES ============
-require('dotenv').config(); // Cargar variables de .env
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('./src/config/supabase');
 
 // ============ CONFIGURACIÓN ============
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Conectar con Supabase (NO pongas /rest/v1 al final de la URL)
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// ============ RUTAS / ENDPOINTS ============
+// ============ RUTAS DE REPORTES (Importadas) ============
+const reportesRoutes = require('./src/routes/reportesRoutes');
+app.use('/api/reportes', reportesRoutes);
+
+// ============ RUTAS / ENDPOINTS PRINCIPALES ============
 
 // 1. RUTA DE PRUEBA
 app.get('/', (req, res) => {
@@ -129,12 +127,11 @@ app.post('/api/validar-qr', async (req, res) => {
   }
 });
 
-// 4. REGISTRAR ASISTENCIA - Entrada o Salida (Con validación de duplas robusta)
+// 4. REGISTRAR ASISTENCIA - Entrada o Salida
 app.post('/api/registrar-asistencia', async (req, res) => {
   try {
     const { estudiante_codigo, tipo_movimiento, maestro_id } = req.body;
 
-    // Validaciones
     if (!estudiante_codigo || !tipo_movimiento || !maestro_id) {
       return res.status(400).json({
         exito: false,
@@ -149,7 +146,6 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       });
     }
 
-    // 1. Buscar al estudiante
     let estudiante;
     try {
       const { data, error } = await supabase
@@ -167,14 +163,11 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       });
     }
 
-    // 2. Obtener fecha y hora actual
     const ahora = new Date();
-    const fecha = ahora.toISOString().split('T')[0]; // YYYY-MM-DD
-    const hora = ahora.toTimeString().split(' ')[0]; // HH:MM:SS
+    const fecha = ahora.toISOString().split('T')[0];
+    const hora = ahora.toTimeString().split(' ')[0];
 
-    // ==========================================
-    // 🟢 3. VALIDACIÓN DE SECUENCIA LÓGICA (CORREGIDA SIN .maybe())
-    // ==========================================
+    // Validación de secuencia (Entrada / Salida alternada)
     const { data: registrosPrevios, error: errorRegistroPrev } = await supabase
       .from('registros')
       .select('*')
@@ -183,13 +176,11 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    // Obtenemos el tipo de movimiento del último registro (si existe)
     let ultimoMovimiento = null;
     if (!errorRegistroPrev && registrosPrevios && registrosPrevios.length > 0) {
       ultimoMovimiento = registrosPrevios[0].tipo_movimiento;
     }
 
-    // A. Si no hay registro previo en el día, y es SALIDA -> Rechazar
     if (!ultimoMovimiento && tipo_movimiento === 'salida') {
       return res.status(400).json({
         exito: false,
@@ -197,7 +188,6 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       });
     }
 
-    // B. Si el movimiento actual es IGUAL al anterior -> Rechazar
     if (ultimoMovimiento === tipo_movimiento) {
       const siguienteMovimiento = tipo_movimiento === 'entrada' ? 'una SALIDA' : 'una ENTRADA';
       return res.status(400).json({
@@ -205,11 +195,7 @@ app.post('/api/registrar-asistencia', async (req, res) => {
         error: `Movimiento inválido. No pueden haber dos ${tipo_movimiento.toUpperCase()} consecutivos. Debe registrarse ${siguienteMovimiento}.`,
       });
     }
-    // ==========================================
-    // 🟢 FIN DE NUEVA VALIDACIÓN
-    // ==========================================
 
-    // 4. Insertar registro en Supabase
     const { data: nuevoRegistro, error: errorRegistro } = await supabase
       .from('registros')
       .insert([
@@ -232,7 +218,6 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       });
     }
 
-    // 5. Respuesta exitosa
     res.json({
       exito: true,
       mensaje: `${tipo_movimiento.toUpperCase()} registrada exitosamente`,
@@ -319,5 +304,14 @@ Endpoints disponibles:
   POST /api/registrar-asistencia  (Registrar entrada/salida)
   POST /api/validar-qr            (Validar código QR)
   GET  /api/historial             (Obtener registros)
+  
+  📊 REPORTES (Nuevos endpoints movidos a /api/reportes):
+  GET /api/reportes/asistencias-por-grado
+  GET /api/reportes/ranking-entrada-salida
+  GET /api/reportes/alumnos-ausentes
+  GET /api/reportes/ausencias-por-dia
+  GET /api/reportes/ausencias-por-mes
+  GET /api/reportes/promedio-asistencia
+  GET /api/reportes/tiempo-promedio-entrada
   `);
 });
