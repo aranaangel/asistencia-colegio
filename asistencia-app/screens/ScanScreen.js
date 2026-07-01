@@ -1,21 +1,36 @@
+import NetInfo from '@react-native-community/netinfo';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 export default function ScanScreen({ user, onLogout }) {
   // ============ ESTADOS ============
-  const [movementType, setMovementType] = useState(null); // 'entrada' o 'salida'
-  const [isScannerActive, setIsScannerActive] = useState(false); // Si el escáner está activo
-  const [lastScanned, setLastScanned] = useState(null); // Último estudiante registrado
+  const [movementType, setMovementType] = useState(null);
+  const [isScannerActive, setIsScannerActive] = useState(false);
+  const [lastScanned, setLastScanned] = useState(null);
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
+
+  // 🔴 NUEVO ESTADO PARA LA CONEXIÓN
+  const [isOnline, setIsOnline] = useState(true);
+
+  // ============ MONITOREO DE RED ============
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      // Verificamos si hay conexión y si realmente se puede llegar a internet
+      const connected = state.isConnected && state.isInternetReachable;
+      setIsOnline(connected);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // ============ PERMISOS DE CÁMARA ============
   if (!permission) {
@@ -26,10 +41,7 @@ export default function ScanScreen({ user, onLogout }) {
     return (
       <View style={styles.container}>
         <Text style={styles.message}>Necesitamos acceso a la cámara</Text>
-        <TouchableOpacity
-          style={styles.permissionButton}
-          onPress={requestPermission}
-        >
+        <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
           <Text style={styles.permissionButtonText}>Permitir acceso</Text>
         </TouchableOpacity>
       </View>
@@ -37,25 +49,20 @@ export default function ScanScreen({ user, onLogout }) {
   }
 
   // ============ FUNCIONES ============
-  
-  // Iniciar escaneo
   const handleStartScanning = (type) => {
     setMovementType(type);
     setIsScannerActive(true);
   };
 
-  // Detener escaneo y volver al inicio
-  const handleStopScanning = () => {
-    setIsScannerActive(false);
-    setMovementType(null);
-  };
-
-  // Manejar escaneo de código QR
   const handleBarcodeScanned = async ({ data }) => {
     if (!isScannerActive) return; 
-
-    // 1. Apagar el escáner INMEDIATAMENTE al leer el QR
     setIsScannerActive(false); 
+
+    // 🔴 VALIDACIÓN DE INTERNET ANTES DE ESCANEAR
+    if (!isOnline) {
+      Alert.alert('📶 Sin conexión', 'Se debe restablecer la conexión a internet para seguir escaneando.');
+      return;
+    }
 
     try {
       const scannedInfo = JSON.parse(data);
@@ -65,8 +72,8 @@ export default function ScanScreen({ user, onLogout }) {
         return;
       }
 
-      // 🟢 CAMBIA ESTA IP POR LA TUYA REAL (la que sacaste con ipconfig)
-      const API_URL = 'http://192.168.0.105:3000/api/registrar-asistencia'; 
+      // 🔴 RECUERDA CAMBIAR ESTA IP POR LA TUYA REAL
+      const API_URL = 'http://192.168.0.34:3000/api/registrar-asistencia'; 
 
       const respuesta = await fetch(API_URL, {
         method: 'POST',
@@ -103,7 +110,8 @@ export default function ScanScreen({ user, onLogout }) {
 
     } catch (error) {
       console.error('Error en el escaneo:', error);
-      Alert.alert('❌ Error de conexión', 'No se pudo conectar al servidor.');
+      // Si el fetch falla por timeout o red aunque el NetInfo diga que hay internet
+      Alert.alert('❌ Error de conexión', 'No se pudo conectar con el servidor. Verifica que el servidor esté encendido.');
     }
   };
 
@@ -113,10 +121,22 @@ export default function ScanScreen({ user, onLogout }) {
       
       {/* ===== HEADER ===== */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>📸 Sistema de Asistencia</Text>
-        <Text style={styles.userText}>
-          👤 {user.nombres} {user.apellidos} ({user.username})
-        </Text>
+        <View>
+          <Text style={styles.headerTitle}>📸 Sistema de Asistencia</Text>
+          <Text style={styles.userText}>
+            👤 {user.nombres} {user.apellidos} ({user.username})
+          </Text>
+        </View>
+
+        {/* 🔴 INDICADOR DE ESTADO DE RED */}
+        <View style={styles.statusContainer}>
+          {!isOnline && (
+            <Text style={styles.offlineBadge}>📶 Sin conexión</Text>
+          )}
+          {isOnline && (
+            <Text style={styles.onlineBadge}>🟢 Conectado</Text>
+          )}
+        </View>
       </View>
 
       {/* ===== CÁMARA ===== */}
@@ -131,7 +151,7 @@ export default function ScanScreen({ user, onLogout }) {
           onBarcodeScanned={handleBarcodeScanned}
         />
 
-        {/* Overlay de escaneo (solo cuando está activo) */}
+        {/* Overlay de escaneo */}
         {isScannerActive && (
           <View style={styles.scannerOverlay}>
             <View style={styles.scannerFrame}>
@@ -147,7 +167,7 @@ export default function ScanScreen({ user, onLogout }) {
           </View>
         )}
 
-        {/* Indicador de escáner inactivo (Sin fondo oscuro) */}
+        {/* Overlay inactivo */}
         {!isScannerActive && (
           <View style={styles.scannerOverlay}>
             <View style={styles.scannerFrame}>
@@ -160,7 +180,7 @@ export default function ScanScreen({ user, onLogout }) {
         )}
       </View>
 
-      {/* ===== BOTONES DE ENTRADA/SALIDA ===== */}
+      {/* ===== BOTONES ===== */}
       <View style={styles.buttonsContainer}>
         <TouchableOpacity
           style={[styles.actionButton, styles.entradaButton]}
@@ -203,20 +223,13 @@ export default function ScanScreen({ user, onLogout }) {
         )}
       </View>
 
-      {/* ===== BOTÓN CERRAR SESIÓN ===== */}
+      {/* ===== CERRAR SESIÓN ===== */}
       <TouchableOpacity
         style={styles.logoutButton}
         onPress={() => {
           Alert.alert('¿Cerrar sesión?', 'Se cerrará tu sesión actual', [
-            {
-              text: 'Cancelar',
-              style: 'cancel',
-            },
-            {
-              text: 'Cerrar sesión',
-              onPress: onLogout,
-              style: 'destructive',
-            },
+            { text: 'Cancelar', style: 'cancel' },
+            { text: 'Cerrar sesión', onPress: onLogout, style: 'destructive' },
           ]);
         }}
       >
@@ -229,17 +242,26 @@ export default function ScanScreen({ user, onLogout }) {
 // ============ ESTILOS ============
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { padding: 15, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  header: { 
+    padding: 15, 
+    backgroundColor: '#fff', 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#e0e0e0', 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center' 
+  },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  userText: { fontSize: 14, color: '#666' },
+  userText: { fontSize: 12, color: '#666', marginTop: 2 },
+  
+  // 🔴 ESTILOS DEL BADGE DE CONEXIÓN
+  statusContainer: { alignItems: 'flex-end' },
+  onlineBadge: { fontSize: 10, color: '#16a34a', fontWeight: 'bold', backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  offlineBadge: { fontSize: 10, color: '#dc2626', fontWeight: 'bold', backgroundColor: '#fee2e2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+
   cameraContainer: { flex: 1, margin: 15, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   camera: { flex: 1 },
-  scannerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'transparent', // 🔥 ELIMINAMOS EL FONDO OSCURO. ¡La cámara se verá completamente nítida!
-  },
+  scannerOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'transparent' },
   scannerFrame: { width: 250, height: 250, position: 'relative' },
   corner: { position: 'absolute', width: 40, height: 40, borderColor: '#00FF00', borderWidth: 3 },
   topLeft: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0 },

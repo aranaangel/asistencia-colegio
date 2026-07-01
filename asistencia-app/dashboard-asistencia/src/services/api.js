@@ -29,4 +29,9 @@ export const getPromedioAsistencia = (mes, anio) =>
 export const getTiempoPromedioEntrada = (mes, anio) => 
   api.get('/reportes/tiempo-promedio-entrada', { params: { mes, anio } });
 
+// 🔴 NUEVA LLAMADA PARA ACTIVIDAD DE MAESTROS
+export const getActividadMaestros = (fecha) => 
+  api.get('/reportes/actividad-maestros', { params: { fecha } });
+export const getEntradasTarde = (fecha) => 
+  api.get('/reportes/entradas-tarde', { params: { fecha } });
 export default api;

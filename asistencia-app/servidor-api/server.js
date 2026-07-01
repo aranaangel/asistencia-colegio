@@ -56,6 +56,16 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
+    // 🔴 LOG DE AUDITORÍA (LOGIN EXITOSO)
+    try {
+      await supabase.from('auditoria_logs').insert([
+        { maestro_id: maestro.id, accion: 'LOGIN', detalles: { username: maestro.username } }
+      ]);
+    } catch (auditError) {
+      console.error('Error guardando auditoría de login:', auditError);
+      // No bloqueamos la respuesta si falla la auditoría
+    }
+
     return res.json({
       exito: true,
       mensaje: 'Login exitoso',
@@ -77,17 +87,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 3. VALIDAR QR - Verificar que el código del estudiante sea válido
+// 3. VALIDAR QR
 app.post('/api/validar-qr', async (req, res) => {
   try {
     const { codigo } = req.body;
-
-    if (!codigo) {
-      return res.status(400).json({
-        exito: false,
-        error: 'Código requerido',
-      });
-    }
+    if (!codigo) return res.status(400).json({ exito: false, error: 'Código requerido' });
 
     let estudiante;
     try {
@@ -96,15 +100,10 @@ app.post('/api/validar-qr', async (req, res) => {
         .select('*')
         .eq('username', codigo)
         .single();
-      
       if (error) throw error;
       estudiante = data;
     } catch (error) {
-      return res.json({
-        exito: false,
-        valido: false,
-        error: 'Código QR no válido',
-      });
+      return res.json({ exito: false, valido: false, error: 'Código QR no válido' });
     }
 
     res.json({
@@ -117,33 +116,22 @@ app.post('/api/validar-qr', async (req, res) => {
         grado: estudiante.grado,
       },
     });
-
   } catch (error) {
     console.error('Error en validar-qr:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor',
-    });
+    res.status(500).json({ exito: false, error: 'Error interno del servidor' });
   }
 });
 
-// 4. REGISTRAR ASISTENCIA - Entrada o Salida
+// 4. REGISTRAR ASISTENCIA
 app.post('/api/registrar-asistencia', async (req, res) => {
   try {
     const { estudiante_codigo, tipo_movimiento, maestro_id } = req.body;
 
     if (!estudiante_codigo || !tipo_movimiento || !maestro_id) {
-      return res.status(400).json({
-        exito: false,
-        error: 'Faltan datos: codigo, tipo y maestro_id',
-      });
+      return res.status(400).json({ exito: false, error: 'Faltan datos: codigo, tipo y maestro_id' });
     }
-
     if (tipo_movimiento !== 'entrada' && tipo_movimiento !== 'salida') {
-      return res.status(400).json({
-        exito: false,
-        error: 'Tipo debe ser "entrada" o "salida"',
-      });
+      return res.status(400).json({ exito: false, error: 'Tipo debe ser "entrada" o "salida"' });
     }
 
     let estudiante;
@@ -153,14 +141,10 @@ app.post('/api/registrar-asistencia', async (req, res) => {
         .select('*')
         .eq('username', estudiante_codigo)
         .single();
-      
       if (error) throw error;
       estudiante = data;
     } catch (error) {
-      return res.status(404).json({
-        exito: false,
-        error: 'Estudiante no encontrado',
-      });
+      return res.status(404).json({ exito: false, error: 'Estudiante no encontrado' });
     }
 
     const ahora = new Date();
@@ -168,7 +152,7 @@ app.post('/api/registrar-asistencia', async (req, res) => {
     const hora = ahora.toTimeString().split(' ')[0];
 
     // Validación de secuencia (Entrada / Salida alternada)
-    const { data: registrosPrevios, error: errorRegistroPrev } = await supabase
+    const { data: registrosPrevios } = await supabase
       .from('registros')
       .select('*')
       .eq('estudiante_username', estudiante.username)
@@ -177,45 +161,49 @@ app.post('/api/registrar-asistencia', async (req, res) => {
       .limit(1);
 
     let ultimoMovimiento = null;
-    if (!errorRegistroPrev && registrosPrevios && registrosPrevios.length > 0) {
+    if (registrosPrevios && registrosPrevios.length > 0) {
       ultimoMovimiento = registrosPrevios[0].tipo_movimiento;
     }
 
     if (!ultimoMovimiento && tipo_movimiento === 'salida') {
-      return res.status(400).json({
-        exito: false,
-        error: 'El día debe comenzar con ENTRADA. No se puede registrar una SALIDA sin una entrada previa.',
-      });
+      return res.status(400).json({ exito: false, error: 'El día debe comenzar con ENTRADA.' });
     }
-
     if (ultimoMovimiento === tipo_movimiento) {
       const siguienteMovimiento = tipo_movimiento === 'entrada' ? 'una SALIDA' : 'una ENTRADA';
       return res.status(400).json({
         exito: false,
-        error: `Movimiento inválido. No pueden haber dos ${tipo_movimiento.toUpperCase()} consecutivos. Debe registrarse ${siguienteMovimiento}.`,
+        error: `Movimiento inválido. Debe registrarse ${siguienteMovimiento}.`,
       });
     }
 
     const { data: nuevoRegistro, error: errorRegistro } = await supabase
       .from('registros')
-      .insert([
-        {
-          tipo_movimiento: tipo_movimiento,
-          fecha: fecha,
-          hora: hora,
-          maestro_id: maestro_id,
-          sincronizado: true,
-          estudiante_username: estudiante.username
-        },
-      ])
+      .insert([{
+        tipo_movimiento: tipo_movimiento,
+        fecha: fecha,
+        hora: hora,
+        maestro_id: maestro_id,
+        sincronizado: true,
+        estudiante_username: estudiante.username
+      }])
       .select();
 
     if (errorRegistro) {
       console.error('❌ ERROR DE SUPABASE AL INSERTAR EN REGISTROS:', errorRegistro);
-      return res.status(500).json({
-        exito: false,
-        error: `Error de Supabase: ${errorRegistro.message || errorRegistro.error || 'Error al registrar asistencia'}`,
-      });
+      return res.status(500).json({ exito: false, error: 'Error al registrar asistencia' });
+    }
+
+    // 🔴 LOG DE AUDITORÍA (REGISTRO ENTRADA/SALIDA)
+    try {
+      await supabase.from('auditoria_logs').insert([
+        { 
+          maestro_id: maestro_id, 
+          accion: tipo_movimiento === 'entrada' ? 'REGISTRO_ENTRADA' : 'REGISTRO_SALIDA',
+          detalles: { estudiante_username: estudiante.username }
+        }
+      ]);
+    } catch (auditError) {
+      console.error('Error guardando auditoría de movimiento:', auditError);
     }
 
     res.json({
@@ -233,10 +221,7 @@ app.post('/api/registrar-asistencia', async (req, res) => {
 
   } catch (error) {
     console.error('Error grave en registrar-asistencia:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor',
-    });
+    res.status(500).json({ exito: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -244,15 +229,10 @@ app.post('/api/registrar-asistencia', async (req, res) => {
 app.get('/api/historial', async (req, res) => {
   try {
     const { fecha, grado, maestro_id } = req.query;
-
     let query = supabase
       .from('registros')
       .select(`
-        id_registro,
-        tipo_movimiento,
-        fecha,
-        hora,
-        sincronizado,
+        id_registro, tipo_movimiento, fecha, hora, sincronizado,
         maestro:maestro_id (id, username, nombres, apellidos),
         estudiante:estudiantes (username, nombres, apellidos, grado)
       `)
@@ -263,27 +243,12 @@ app.get('/api/historial', async (req, res) => {
     if (maestro_id) query = query.eq('maestro_id', maestro_id);
 
     const { data: registros, error } = await query.limit(100);
+    if (error) return res.status(500).json({ exito: false, error: 'Error al obtener historial' });
 
-    if (error) {
-      console.error('Error al obtener historial:', error);
-      return res.status(500).json({
-        exito: false,
-        error: 'Error al obtener historial',
-      });
-    }
-
-    res.json({
-      exito: true,
-      total: registros.length,
-      registros: registros,
-    });
-
+    res.json({ exito: true, total: registros.length, registros: registros });
   } catch (error) {
     console.error('Error en historial:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor',
-    });
+    res.status(500).json({ exito: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -293,25 +258,7 @@ app.listen(PORT, () => {
 ╔════════════════════════════════════╗
 ║   🚀 SERVIDOR CORRIENDO EXITOSO   ║
 ╚════════════════════════════════════╝
-
 📍 URL: http://localhost:${PORT}
 🔌 Conectado a Supabase
-📡 CORS habilitado para React Native
-
-Endpoints disponibles:
-  GET  /                          (Verificar servidor)
-  POST /api/login                 (Autenticar maestro)
-  POST /api/registrar-asistencia  (Registrar entrada/salida)
-  POST /api/validar-qr            (Validar código QR)
-  GET  /api/historial             (Obtener registros)
-  
-  📊 REPORTES (Nuevos endpoints movidos a /api/reportes):
-  GET /api/reportes/asistencias-por-grado
-  GET /api/reportes/ranking-entrada-salida
-  GET /api/reportes/alumnos-ausentes
-  GET /api/reportes/ausencias-por-dia
-  GET /api/reportes/ausencias-por-mes
-  GET /api/reportes/promedio-asistencia
-  GET /api/reportes/tiempo-promedio-entrada
   `);
 });

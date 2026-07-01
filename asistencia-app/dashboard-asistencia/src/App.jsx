@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import ExportModal from './components/ExportModal';
 import Header from './components/Header';
+import MonthlyExportModal from './components/MonthlyExportModal';
 import {
+  getActividadMaestros,
   getAsistenciasPorGrado,
   getAusenciasPorMes,
   getAusentes,
+  getEntradasTarde,
   getPromedioAsistencia,
   getRanking,
   getRankingDiario,
@@ -14,6 +17,23 @@ import {
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg text-base">
+        <p className="font-bold text-gray-800 mb-1 text-lg">{data.grado}</p>
+        <div className="space-y-1">
+          <p className="text-gray-600">Total alumnos: <span className="font-bold text-gray-800">{data.total_estudiantes}</span></p>
+          <p className="text-green-600">Asistencias: <span className="font-bold">{data.asistencias}</span></p>
+          <p className="text-red-600 font-medium">Ausentes: <span className="font-bold">{data.ausencias}</span></p>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
 
 function App() {
   const hoy = new Date();
@@ -27,9 +47,9 @@ function App() {
   const [anioMensual, setAnioMensual] = useState(anioActual);
   const años = Array.from({ length: 2050 - 2024 + 1 }, (_, i) => 2024 + i);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDailyModalOpen, setIsDailyModalOpen] = useState(false);
+  const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
 
-  // 🔴 ESTADO DIARIO (Incluye salidas)
   const [diario, setDiario] = useState({
     totalEstudiantes: 0,
     ausentesHoy: 0,
@@ -39,7 +59,9 @@ function App() {
     listaAusentesHoy: [],
   });
 
-  // 🔴 ESTADO MENSUAL (Incluye salidas)
+  const [actividadMaestros, setActividadMaestros] = useState([]);
+  const [entradasTarde, setEntradasTarde] = useState([]);
+
   const [mensual, setMensual] = useState({
     promedioAsistencia: 0,
     horaPromedio: '--:--',
@@ -54,27 +76,22 @@ function App() {
     const cargarDatos = async () => {
       setCargando(true);
       try {
-        const [resGrado, resAusentesHoy, resRankingHoy, resPromedio, resHora, resRankingMes, resAusenciasMes] = await Promise.all([
+        const [resGrado, resAusentesHoy, resRankingHoy, resActividadMaestros, resEntradasTarde, resPromedio, resHora, resRankingMes, resAusenciasMes] = await Promise.all([
           getAsistenciasPorGrado(fechaDiaria, fechaDiaria),
           getAusentes(fechaDiaria),
           getRankingDiario(fechaDiaria),
+          getActividadMaestros(fechaDiaria),
+          getEntradasTarde(fechaDiaria),
           getPromedioAsistencia(mesMensual, anioMensual),
           getTiempoPromedioEntrada(mesMensual, anioMensual),
           getRanking(mesMensual, anioMensual),
           getAusenciasPorMes(mesMensual, anioMensual)
         ]);
 
-        // Procesar datos diarios
-        const gradosData = Object.entries(resGrado.data.por_grado).map(([grado, cantidad]) => ({
-          grado,
-          cantidad,
-        }));
+        const gradosData = resGrado.data.data || [];
 
-        const totalAsistenciasHoy = gradosData.reduce((sum, item) => sum + item.cantidad, 0);
-        
-        // 🔴 Validación: Si no hay asistencias hoy, vaciamos las listas de entrada
+        const totalAsistenciasHoy = gradosData.reduce((sum, item) => sum + item.asistencias, 0);
         const primeros10EntradaHoy = totalAsistenciasHoy > 0 ? (resRankingHoy.data.primeros_en_entrar || []) : [];
-        // 🔴 Validación: Si el array de salidas viene vacío, se queda vacío y el componente muestra "Sin datos"
         const ultimos10SalidaHoy = resRankingHoy.data.ultimos_en_salir || [];
 
         setDiario({
@@ -86,7 +103,9 @@ function App() {
           listaAusentesHoy: resAusentesHoy.data.listado_ausentes || [],
         });
 
-        // Procesar datos mensuales
+        setActividadMaestros(resActividadMaestros.data.actividad || []);
+        setEntradasTarde(resEntradasTarde.data.data || []);
+
         setMensual({
           promedioAsistencia: resPromedio.data.promedio_asistencia_global || 0,
           horaPromedio: resHora.data.tiempo_promedio_entrada || 'Sin datos',
@@ -110,15 +129,23 @@ function App() {
       <Header />
 
       <ExportModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+        isOpen={isDailyModalOpen} 
+        onClose={() => setIsDailyModalOpen(false)} 
         data={diario.listaAusentesHoy}
         fecha={fechaDiaria}
       />
+      <MonthlyExportModal
+        isOpen={isMonthlyModalOpen}
+        onClose={() => setIsMonthlyModalOpen(false)}
+        data={mensual.ausentesPorMes}
+        mes={mesMensual}
+        anio={anioMensual}
+      />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 space-y-10">
+      {/* El main ahora usa max-w-[90%] y las fuentes están agrandadas */}
+      <main className="max-w-[90%] mx-auto px-4 sm:px-6 lg:px-8 mt-8 space-y-10">
         {cargando ? (
-          <div className="text-center py-20 text-gray-500 font-medium">
+          <div className="text-center py-20 text-gray-500 font-medium text-xl">
             Cargando datos del panel...
           </div>
         ) : (
@@ -128,42 +155,68 @@ function App() {
             {/* ========================================= */}
             <section>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-2 gap-4">
-                <h2 className="text-2xl font-bold text-gray-800">📊 Reporte Diario</h2>
-                
-                <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg p-1 px-3 shadow-sm">
-                  <label htmlFor="fechaDiaria" className="text-sm font-medium text-gray-600">Fecha:</label>
+                {/* 🔴 TÍTULO PRINCIPAL AUMENTADO A text-3xl (30px) */}
+                <h2 className="text-3xl font-bold text-gray-800">📊 Reporte Diario</h2>
+                <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg p-1 px-3 shadow-sm text-base">
+                  <label htmlFor="fechaDiaria" className="text-base font-medium text-gray-600">Fecha:</label>
                   <input 
                     type="date" 
                     id="fechaDiaria"
                     value={fechaDiaria}
                     onChange={(e) => setFechaDiaria(e.target.value)}
-                    className="bg-transparent text-gray-700 text-sm focus:outline-none border-none p-1"
+                    className="bg-transparent text-gray-700 text-base focus:outline-none border-none p-1"
                   />
                 </div>
               </div>
               
               <div className="space-y-6">
-                {/* KPI Diarios */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                
+                {/* KPIs Diarios */}
+                <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <p className="text-sm text-gray-500 font-medium">Estudiantes totales</p>
-                    <p className="text-3xl font-bold text-gray-800 mt-2">{diario.totalEstudiantes}</p>
+                    {/* 🔴 ETIQUETAS AUMENTADAS A text-base (16px) */}
+                    <p className="text-base text-gray-500 font-medium">Estudiantes totales</p>
+                    {/* 🔴 VALORES AUMENTADOS A text-4xl (36px) */}
+                    <p className="text-4xl font-bold text-gray-800 mt-2">{diario.totalEstudiantes}</p>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <p className="text-sm text-gray-500 font-medium">Ausentes hoy</p>
-                    <p className="text-3xl font-bold text-red-600 mt-2">{diario.ausentesHoy}</p>
+                    <p className="text-base text-gray-500 font-medium">Ausentes hoy</p>
+                    <p className="text-4xl font-bold text-red-600 mt-2">{diario.ausentesHoy}</p>
                   </div>
-                </div>
 
+                  {/* Actividad Maestros - CORREGIDO PARA MOSTRAR NOMBRE COMPLETO */}
+                  <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                    <p className="text-base text-gray-500 font-medium">👨‍🏫 Actividad Maestros</p>
+                    <div className="mt-2 space-y-1 max-h-20 overflow-y-auto">
+                      {actividadMaestros.length > 0 ? (
+                        actividadMaestros.slice(0, 3).map((m, i) => (
+                          /* 🔴 CAMBIO: Se eliminó el truncate y max-w-[70px]. Ahora usa flex-1 y gap-2 */
+                          <div key={i} className="text-sm flex justify-between items-center border-b border-gray-100 pb-1 last:border-0 gap-2">
+                            <span className="font-medium text-gray-700 flex-1 text-2xl">{m.nombre}</span>
+                            <span className="text-xs flex gap-1 shrink-0">
+                              <span className="bg-green-100 text-green-700  text-2xl px-1 rounded">E:{m.entradas}</span>
+                              <span className="bg-orange-100 text-orange-700 text-2xl px-1 rounded">S:{m.salidas}</span>
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-gray-400 mt-1">Sin actividad hoy.</p>
+                      )}
+                    </div>
+                  </div>
+                </section>
+
+                {/* Gráfico Diario */}
                 <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 w-full">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Asistencias - Día Actual ({fechaDiaria})</h3>
+                  {/* 🔴 TÍTULO DE PANEL A text-2xl (24px) */}
+                  <h3 className="text-2xl font-semibold text-gray-800 mb-4">Asistencias - Día Actual ({fechaDiaria})</h3>
                   <div className="h-64 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={diario.asistenciasPorGrado}>
                         <XAxis dataKey="grado" axisLine={false} tickLine={false} />
                         <YAxis axisLine={false} tickLine={false} allowDecimals={false} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                        <Bar dataKey="cantidad" radius={[4, 4, 0, 0]}>
+                        <Tooltip content={<CustomTooltip />} />
+                        <Bar dataKey="asistencias" radius={[4, 4, 0, 0]}>
                           {diario.asistenciasPorGrado.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                           ))}
@@ -173,77 +226,65 @@ function App() {
                   </div>
                 </div>
 
-                {/* Listas Diarias */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* LISTAS DIARIAS */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  
                   {/* Entradas Hoy */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-4">🕐 Top 10 primeros en entrar hoy</h3>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">🕐 Primeros en entrar</h3>
                     <div className="space-y-3 overflow-y-auto max-h-64">
                       {diario.primeros10EntradaHoy.length > 0 ? (
                         diario.primeros10EntradaHoy.map((alumno, index) => (
                           <div key={index} className="flex items-center justify-between p-2 bg-green-50 rounded-lg border border-green-100">
-                            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 flex-1 min-w-0">
-                              <span className="font-bold text-gray-400 text-sm">#{index + 1}</span>
-                              <span className="text-sm text-gray-700 font-medium truncate">{alumno.nombre}</span>
-                              <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:gap-1 flex-1 min-w-0">
+                              <span className="font-bold text-gray-400 text-base">#{index + 1}</span>
+                              <span className="text-base text-gray-700 font-medium truncate">{alumno.nombre}</span>
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
                                 {alumno.grado || 'Sin grado'}
                               </span>
                             </div>
-                            <span className="text-xs text-green-600 font-bold bg-green-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
-                              {alumno.hora}
+                            <span className="text-sm text-green-600 font-bold bg-green-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
+                              {alumno.hora.slice(0, 5)}
                             </span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-gray-400 text-sm text-center py-6">Sin datos hoy.</p>
+                        <p className="text-gray-400 text-base text-center py-6">Sin datos hoy.</p>
                       )}
                     </div>
                   </div>
 
                   {/* Salidas Hoy */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-4">⬇️ Últimos 10 en salir hoy</h3>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">⬇️ Últimos en salir</h3>
                     <div className="space-y-3 overflow-y-auto max-h-64">
                       {diario.ultimos10SalidaHoy.length > 0 ? (
                         diario.ultimos10SalidaHoy.map((alumno, index) => (
-                          <div key={index} className="flex items-center justify-between p-2 bg-orange-50 rounded-lg border border-orange-100">
-                            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 flex-1 min-w-0">
-                              <span className="font-bold text-gray-400 text-sm">#{index + 1}</span>
-                              <span className="text-sm text-gray-700 font-medium truncate">{alumno.nombre}</span>
-                              <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
+                          <div key={index} className="flex items-center  justify-between p-2 bg-orange-50 rounded-lg border border-orange-100">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:gap-1 flex-1 min-w-0">
+                              <span className="font-bold text-gray-400 text-base">#{index + 1}</span>
+                              <span className="text-base text-gray-700 font-medium truncate">{alumno.nombre}</span>
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
                                 {alumno.grado || 'Sin grado'}
                               </span>
                             </div>
-                            <span className="text-xs text-orange-600 font-bold bg-orange-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
-                              {alumno.hora}
+                            <span className="text-sm text-orange-600 font-bold bg-orange-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
+                              {alumno.hora.slice(0, 5)}
                             </span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-gray-400 text-sm text-center py-6">Sin datos hoy.</p>
+                        <p className="text-gray-400 text-base text-center py-6">Sin datos hoy.</p>
                       )}
                     </div>
                   </div>
 
                   {/* Ausentes Hoy */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800">🚫 Ausentes hoy</h3>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => setIsModalOpen(true)}
-                          className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-full border border-gray-300 transition-colors flex items-center gap-1"
-                          disabled={diario.listaAusentesHoy.length === 0}
-                        >
-                          ⬇️ Exportar
-                        </button>
-                        <button 
-                          onClick={() => window.location.reload()}
-                          className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-full border border-blue-200 transition-colors flex items-center gap-1"
-                        >
-                          🔄 Refrescar
-                        </button>
-                      </div>
+                    <div className="w-full mb-4 flex justify-center">
+                      <span className="bg-red-100 text-red-700 font-bold px-4 py-2 rounded-full flex items-center gap-1 text-base">
+                        🚫 Ausentes hoy
+                      </span>
                     </div>
                     
                     <div className="mt-2 max-h-64 overflow-y-auto pr-1 space-y-2">
@@ -251,19 +292,55 @@ function App() {
                         diario.listaAusentesHoy.map((alumno, index) => (
                           <div key={index} className="flex justify-between items-center p-2 bg-red-50 rounded-md border border-red-100">
                             <div className="flex items-center gap-2 overflow-hidden">
-                              <span className="text-xs font-bold text-red-500 bg-red-200 px-1.5 py-0.5 rounded-full shrink-0">Ausente</span>
-                              <span className="text-sm font-medium text-gray-700 truncate">{alumno.nombre}</span>
+                              <span className="text-base font-medium text-gray-700 truncate">{alumno.nombre}</span>
                             </div>
-                            <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
+                            <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
                               {alumno.grado}
                             </span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-sm text-gray-400 italic mt-2 text-center py-4">🎉 ¡No hay ausentes hoy!</p>
+                        <p className="text-base text-gray-400 italic mt-2 text-center py-4">🎉 ¡No hay ausentes hoy!</p>
+                      )}
+                    </div>
+
+                    {diario.listaAusentesHoy.length > 0 && (
+                      <button
+                        onClick={() => setIsDailyModalOpen(true)}
+                        className="w-full mt-4 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors border border-gray-300 flex items-center justify-center gap-2 text-base"
+                      >
+                        ⬇️ Exportar reporte
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Entradas Tarde (Panel Morado) */}
+                  <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4 text-purple-700 flex items-center gap-2">
+                      <span className="text-2xl">🕒</span> Entradas tarde (&gt;7am)
+                    </h3>
+                    <div className="space-y-3 overflow-y-auto max-h-64">
+                      {entradasTarde.length > 0 ? (
+                        entradasTarde.map((alumno, index) => (
+                          <div key={index} className="flex items-center justify-between p-2 bg-purple-50 rounded-lg border border-purple-100">
+                            <div className="flex flex-col sm:flex-row sm:items-center  sm:gap-1 flex-1 min-w-0">
+                              <span className="font-bold text-purple-400 text-base">#{index + 1}</span>
+                              <span className="text-base text-gray-700 font-medium truncate">{alumno.nombre}</span>
+                              <span className="text-sm text-purple-500 bg-white px-2 py-0.5 rounded-full border border-purple-200 font-medium">
+                                {alumno.grado || 'Sin grado'}
+                              </span>
+                            </div>
+                            <span className="text-sm text-purple-600 font-bold bg-purple-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
+                              {alumno.hora}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-gray-400 text-base text-center py-6 text-purple-400">🎉 Sin entradas tarde hoy.</p>
                       )}
                     </div>
                   </div>
+
                 </div>
               </div>
             </section>
@@ -273,16 +350,15 @@ function App() {
             {/* ========================================= */}
             <section>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-2 gap-4">
-                <h2 className="text-2xl font-bold text-gray-800">📈 Reporte Mensual</h2>
-                
-                <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-lg p-1 px-3 shadow-sm">
+                <h2 className="text-3xl font-bold text-gray-800">📈 Reporte Mensual</h2>
+                <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-lg p-1 px-3 shadow-sm text-base">
                   <div className="flex items-center gap-1">
-                    <label htmlFor="mesMensual" className="text-sm font-medium text-gray-600">Mes:</label>
+                    <label htmlFor="mesMensual" className="text-base font-medium text-gray-600">Mes:</label>
                     <select 
                       id="mesMensual"
                       value={mesMensual}
                       onChange={(e) => setMesMensual(Number(e.target.value))}
-                      className="bg-transparent text-gray-700 text-sm focus:outline-none border-none p-1"
+                      className="bg-transparent text-gray-700 text-base focus:outline-none border-none p-1"
                     >
                       {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                         <option key={m} value={m}>
@@ -291,14 +367,13 @@ function App() {
                       ))}
                     </select>
                   </div>
-
                   <div className="flex items-center gap-1">
-                    <label htmlFor="anioMensual" className="text-sm font-medium text-gray-600">Año:</label>
+                    <label htmlFor="anioMensual" className="text-base font-medium text-gray-600">Año:</label>
                     <select 
                       id="anioMensual"
                       value={anioMensual}
                       onChange={(e) => setAnioMensual(Number(e.target.value))}
-                      className="bg-transparent text-gray-700 text-sm focus:outline-none border-none p-1"
+                      className="bg-transparent text-gray-700 text-base focus:outline-none border-none p-1"
                     >
                       {años.map((a) => (
                         <option key={a} value={a}>{a}</option>
@@ -309,72 +384,73 @@ function App() {
               </div>
               
               <div className="space-y-6">
+                {/* KPIs Mensuales */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <p className="text-sm text-gray-500 font-medium">Promedio asistencia mes</p>
-                    <p className="text-3xl font-bold text-blue-600 mt-2">{(mensual.promedioAsistencia * 100).toFixed(1)}%</p>
+                    <p className="text-base text-gray-500 font-medium">Promedio asistencia mes</p>
+                    <p className="text-4xl font-bold text-blue-600 mt-2">{(mensual.promedioAsistencia * 100).toFixed(1)}%</p>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <p className="text-sm text-gray-500 font-medium">Hora promedio de entrada</p>
-                    <p className="text-3xl font-bold text-green-600 mt-2">{mensual.horaPromedio}</p>
+                    <p className="text-base text-gray-500 font-medium">Hora promedio de entrada</p>
+                    <p className="text-4xl font-bold text-green-600 mt-2">{mensual.horaPromedio}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {/* Entradas Mensuales */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-4">🏆 Record mensual - Primeros en entrar</h3>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">🏆 Record mensual - Entradas</h3>
                     <div className="space-y-3 overflow-y-auto max-h-64">
                       {mensual.recordEntradaMes.length > 0 ? (
                         mensual.recordEntradaMes.map((alumno, index) => (
                           <div key={index} className="flex items-center justify-between p-2 bg-blue-50 rounded-lg border border-blue-100">
                             <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 flex-1 min-w-0">
-                              <span className="font-bold text-gray-400 text-sm">#{index + 1}</span>
-                              <span className="text-sm text-gray-700 font-medium truncate">{alumno.nombre}</span>
-                              <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
+                              <span className="font-bold text-gray-400 text-base">#{index + 1}</span>
+                              <span className="text-base text-gray-700 font-medium truncate">{alumno.nombre}</span>
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
                                 {alumno.grado || 'Sin grado'}
                               </span>
                             </div>
-                            <span className="text-xs text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
-                              {alumno.hora}
+                            <span className="text-sm text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
+                              {alumno.hora.slice(0, 5)}
                             </span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-gray-400 text-sm">Sin datos este mes.</p>
+                        <p className="text-gray-400 text-base">Sin datos este mes.</p>
                       )}
                     </div>
                   </div>
 
                   {/* Salidas Mensuales */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-4">🏆 Record mensual - Últimos en salir</h3>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">🏆 Record mensual - Salidas</h3>
                     <div className="space-y-3 overflow-y-auto max-h-64">
                       {mensual.recordSalidaMes.length > 0 ? (
                         mensual.recordSalidaMes.map((alumno, index) => (
                           <div key={index} className="flex items-center justify-between p-2 bg-orange-50 rounded-lg border border-orange-100">
                             <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 flex-1 min-w-0">
-                              <span className="font-bold text-gray-400 text-sm">#{index + 1}</span>
-                              <span className="text-sm text-gray-700 font-medium truncate">{alumno.nombre}</span>
-                              <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
+                              <span className="font-bold text-gray-400 text-base">#{index + 1}</span>
+                              <span className="text-base text-gray-700 font-medium truncate">{alumno.nombre}</span>
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 font-medium">
                                 {alumno.grado || 'Sin grado'}
                               </span>
                             </div>
-                            <span className="text-xs text-orange-600 font-bold bg-orange-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
-                              {alumno.hora}
+                            <span className="text-sm text-orange-600 font-bold bg-orange-100 px-2 py-0.5 rounded-full ml-2 shrink-0">
+                              {alumno.hora.slice(0, 5)}
                             </span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-gray-400 text-sm">Sin datos este mes.</p>
+                        <p className="text-gray-400 text-base">Sin datos este mes.</p>
                       )}
                     </div>
                   </div>
 
-                  {/* Ausentes por Mes */}
+                  {/* Ausencias por alumno (Mes) */}
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800">📉 Ausencias por alumno (Mes)</h3>
+                      <h3 className="text-2xl font-semibold text-gray-800">📉 Ausencias por alumno (Mes)</h3>
                     </div>
                     <div className="mt-2 max-h-64 overflow-y-auto pr-1 space-y-2">
                       {mensual.ausentesPorMes.length > 0 ? (
@@ -384,18 +460,30 @@ function App() {
                           .map((alumno, index) => (
                             <div key={index} className="flex justify-between items-center p-2 bg-orange-50 rounded-md border border-orange-100">
                               <div className="flex items-center gap-2 overflow-hidden">
-                                <span className="text-xs font-bold text-orange-500 bg-orange-200 px-1.5 py-0.5 rounded-full shrink-0">{alumno.ausencias}x</span>
-                                <span className="text-sm font-medium text-gray-700 truncate">{alumno.nombre}</span>
+                                {/* 🔴 GRADO A text-sm */}
+                                <span className="text-sm font-bold text-orange-600 bg-orange-200 px-1.5 py-0.5 rounded-full shrink-0">
+                                  {alumno.grado}
+                                </span>
+                                <span className="text-base font-medium text-gray-700 truncate">{alumno.nombre}</span>
                               </div>
-                              <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
                                 {alumno.ausencias} faltas
                               </span>
                             </div>
                           ))
                       ) : (
-                        <p className="text-sm text-gray-400 italic mt-2 text-center py-4">🎉 ¡Asistencia perfecta este mes!</p>
+                        <p className="text-base text-gray-400 italic mt-2 text-center py-4">🎉 ¡Asistencia perfecta este mes!</p>
                       )}
                     </div>
+
+                    {mensual.ausentesPorMes.length > 0 && (
+                      <button
+                        onClick={() => setIsMonthlyModalOpen(true)}
+                        className="w-full mt-4 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors border border-gray-300 flex items-center justify-center gap-2 text-base"
+                      >
+                        ⬇️ Exportar reporte mensual
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
